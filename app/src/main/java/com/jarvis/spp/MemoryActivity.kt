@@ -22,7 +22,14 @@ class MemoryActivity : ScreenActivity() {
                 card.addView(UiKit.text(c, p.text, 14f))
                 card.addView(UiKit.text(c, "Sensitive lagta hai: " + p.reason, 12f, dim = true))
                 val r = UiKit.row(c)
-                r.addView(UiKit.rowButton(c, "✅ Allow") { MemoryStore.approvePending(c, i); rebuild() })
+                r.addView(UiKit.rowButton(c, "✅ Allow") {
+                    when (MemoryStore.approvePending(c, i)) {
+                        MemoryStore.AddResult.SAVED -> UiKit.toast(c, "Permission mil gayi; yaad save/update ho gayi 📝")
+                        MemoryStore.AddResult.DUPLICATE -> UiKit.toast(c, "Aisi yaad pehle se maujood hai")
+                        else -> UiKit.toast(c, "Yaad save nahi ho paayi")
+                    }
+                    rebuild()
+                })
                 r.addView(UiKit.rowButton(c, "❌ Mat rakho") { MemoryStore.rejectPending(i); rebuild() })
                 card.addView(r)
                 container.addView(card)
@@ -58,7 +65,16 @@ class MemoryActivity : ScreenActivity() {
         val et = android.widget.EditText(c)
         et.setText(e.text)
         AlertDialog.Builder(c).setTitle("Badlo").setView(et)
-            .setPositiveButton("Save") { _, _ -> MemoryStore.update(c, e.id, et.text.toString()); rebuild() }
+            .setPositiveButton("Save") { _, _ ->
+                when (MemoryStore.update(c, e.id, et.text.toString())) {
+                    MemoryStore.AddResult.SAVED -> UiKit.toast(c, "Yaad update ho gayi 📝")
+                    MemoryStore.AddResult.SENSITIVE_PENDING -> UiKit.toast(c, "Ye sensitive lagti hai. Allow karne ke baad hi update hogi 🔒")
+                    MemoryStore.AddResult.DUPLICATE -> UiKit.toast(c, "Aisi yaad pehle se maujood hai")
+                    MemoryStore.AddResult.TOO_SHORT -> UiKit.toast(c, "Thoda aur likho")
+                    MemoryStore.AddResult.DISABLED -> UiKit.toast(c, "Memory band hai")
+                }
+                rebuild()
+            }
             .setNegativeButton("Nahi", null).show()
     }
 
@@ -68,10 +84,15 @@ class MemoryActivity : ScreenActivity() {
         et.hint = "Jaise: Mujhe chhote jawab pasand hain"
         AlertDialog.Builder(c).setTitle("Nayi yaad").setView(et)
             .setPositiveButton("Save") { _, _ ->
-                // User ne khud likha hai, isliye force: par sensitive ho to bhi user ki marzi
+                // Nayi yaad par sensitive filter chalega; zarurat par Allow maanga jayega.
                 val t = et.text.toString()
-                val r = MemoryStore.add(c, t, "fact", auto = false, force = true)
-                if (r == MemoryStore.AddResult.TOO_SHORT) UiKit.toast(c, "Thoda aur likho")
+                when (MemoryStore.add(c, t, "fact", auto = false)) {
+                    MemoryStore.AddResult.SAVED -> UiKit.toast(c, "Yaad save ho gayi 📝")
+                    MemoryStore.AddResult.SENSITIVE_PENDING -> UiKit.toast(c, "Sensitive lagti hai. Allow karne ke baad hi save hogi 🔒")
+                    MemoryStore.AddResult.DUPLICATE -> UiKit.toast(c, "Ye yaad pehle se saved hai")
+                    MemoryStore.AddResult.TOO_SHORT -> UiKit.toast(c, "Thoda aur likho")
+                    MemoryStore.AddResult.DISABLED -> UiKit.toast(c, "Memory band hai")
+                }
                 rebuild()
             }.setNegativeButton("Nahi", null).show()
     }
