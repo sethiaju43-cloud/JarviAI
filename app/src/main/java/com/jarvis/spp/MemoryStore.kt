@@ -13,7 +13,7 @@ object MemoryStore {
 
     enum class AddResult { SAVED, DUPLICATE, SENSITIVE_PENDING, DISABLED, TOO_SHORT }
 
-    class Pending(val text: String, val kind: String, val reason: String)
+    class Pending(val text: String, val kind: String, val reason: String, val updateId: String? = null)
 
     private const val PREFS = "jarvis_mem2"
     private const val KEY = "entries"
@@ -82,36 +82,59 @@ object MemoryStore {
 
     @Synchronized
     fun add(ctx: Context, textIn: String, kind: String = "fact", auto: Boolean = true, force: Boolean = false): AddResult {
+        // force sirf tab use hota hai jab user ne kisi alag confirmation dialog mein
+        // save karne ki saaf permission de di ho (jaise Fresh Mind summary).
         if (!force && !enabled(ctx)) return AddResult.DISABLED
         val t = textIn.trim().trim('"', '\'', '*', '.').take(200)
         if (t.length < 4) return AddResult.TOO_SHORT
         val list = load(ctx)
         val low = t.lowercase()
         if (list.any { it.text.lowercase() == low }) return AddResult.DUPLICATE
+
         if (!force) {
             val why = SensitiveFilter.reasons(t)
             if (why.isNotEmpty()) {
-                if (pending.none { it.text.lowercase() == low }) pending.add(Pending(t, kind, why.joinToString(", ")))
+                if (pending.none { it.text.lowercase() == low && it.updateId == null }) {
+                    pending.add(Pending(t, kind, why.joinToString(", ")))
+                }
                 return AddResult.SENSITIVE_PENDING
             }
         }
-        list.add(MemoryEntry(newId(), t, kind, System.currentTimeMillis(), auto))
+
+        saveEntry(ctx, t, kind, auto)
+        return AddResult.SAVED
+    }
+
+    /** Save yaad ko edit karta hai. Sensitive edit pe purani yaad nahi badalti; approval pending hota hai. */
+    @Synchronized
+    fun update(ctx: Context, id: String, text: String): AddResult {
+        val e = load(ctx).firstOrNull { it.id == id } ?: return AddResult.TOO_SHORT
+        val t = text.trim().take(200)
+        if (t.length < 4) return AddResult.TOO_SHORT
+        if (load(ctx).any { it.id != id && it.text.equals(t, ignoreCase = true) }) return AddResult.DUPLICATE
+
+        val why = SensitiveFilter.reasons(t)
+        if (why.isNotEmpty()) {
+            if (pending.none { it.updateId == id }) {
+                pending.add(Pending(t, e.kind, why.joinToString(", "), updateId = id))
+            }
+            return AddResult.SENSITIVE_PENDING
+        }
+
+        e.text = t
+        save(ctx)
+        return AddResult.SAVED
+    }
+
+    /** Internal save helper: approval ke baad hi sensitive text yahan aa sakta hai. */
+    private fun saveEntry(ctx: Context, text: String, kind: String, auto: Boolean) {
+        val list = load(ctx)
+        list.add(MemoryEntry(newId(), text, kind, System.currentTimeMillis(), auto))
         while (list.size > MAX) {
             val idx = list.indexOfFirst { it.auto }
             list.removeAt(if (idx >= 0) idx else 0)
         }
         save(ctx)
-        return AddResult.SAVED
-    }
-
-    @Synchronized
-    fun update(ctx: Context, id: String, text: String) {
-        val e = load(ctx).firstOrNull { it.id == id } ?: return
-        val t = text.trim().take(200)
-        if (t.length >= 2) {
-            e.text = t
-            save(ctx)
-        }
     }
 
     @Synchronized
@@ -133,7 +156,19 @@ object MemoryStore {
     fun approvePending(ctx: Context, index: Int): AddResult {
         if (index !in pending.indices) return AddResult.TOO_SHORT
         val p = pending.removeAt(index)
-        return add(ctx, p.text, p.kind, auto = false, force = true)
+        val updateId = p.updateId
+        if (updateId != null) {
+            val existing = load(ctx).firstOrNull { it.id == updateId } ?: return AddResult.TOO_SHORT
+            if (load(ctx).any { it.id != updateId && it.text.equals(p.text, ignoreCase = true) }) {
+                return AddResult.DUPLICATE
+            }
+            existing.text = p.text
+            save(ctx)
+            return AddResult.SAVED
+        }
+        // User ne Allow dabaya hai: yahan sensitive check ke baad consent maana gaya hai.
+        saveEntry(ctx, p.text, p.kind, auto = false)
+        return AddResult.SAVED
     }
 
     @Synchronized
